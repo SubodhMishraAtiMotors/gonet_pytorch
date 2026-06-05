@@ -1,4 +1,4 @@
-# GONet PyTorch Traversability Estimation
+# [GONet](https://github.com/NHirose/GONET) PyTorch Traversability Estimation
 
 PyTorch reproduction of the **GONet** monocular image-level traversability pipeline using the **GO Stanford** dataset.
 
@@ -197,13 +197,8 @@ go_stanford_dataset/
         └── unlabel_R
 ```
 
-This README assumes your dataset is located at:
 
-```bash
-/home/subodh/Downloads/go_stanford_dataset
-```
-
-Change this path in all commands if your dataset is somewhere else.
+Change the path to wherever the dataset is.
 
 ---
 
@@ -226,20 +221,6 @@ normalize from [0, 255] to approximately [-1, 1]
     ↓
 CHW tensor
 ```
-
-Do **not** apply the circular fisheye crop/mask parameters from the original ROS code to the released GO Stanford images.
-
-Those original parameters:
-
-```python
-xc = 310
-yc = 321
-radius = 275
-```
-
-were meant for the raw live camera stream, not for the already-preprocessed dataset images.
-
----
 
 ## 6. Step 2 — Inspect preprocessing
 
@@ -908,33 +889,8 @@ fusion with depth or projected planned path
 
 ---
 
-## 18. Portfolio positioning
-
-This repository should be described as:
-
-```text
-A PyTorch reproduction and analysis of GONet for monocular image-level traversability estimation.
-```
-
-It demonstrates:
-
-```text
-research-code understanding
-PyTorch implementation
-GAN training
-inverse-generator training
-binary classifier training
-evaluation with ROC/PR metrics
-safety-oriented threshold tuning
-inference video generation
-```
-
-Do not claim that this is production-ready. It is a research reproduction and robotics perception prototype.
-
----
-
-## 19. Citation / acknowledgement
+## 18. Citation / acknowledgement
 
 This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
 
-Please cite and acknowledge the original GONet authors and dataset source when using this repository publicly.
+Please cite and acknowledge the original [GONet](https://github.com/NHirose/GONET) authors and dataset source when using this repository publicly.
