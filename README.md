@@ -10,6 +10,8 @@ This repository trains a GAN-based traversability estimator in three stages:
 
 The trained model can then be evaluated on the hand-labelled test split and used to run inference on unlabelled frames, producing annotated videos with **GO / NO-GO** decisions.
 
+Check results here:
+[Go Stanford Video](https://drive.google.com/file/d/1KW_wh3gb5HvJM6Oo6VMbjmJRCk3imvuj/view?usp=sharing)
 ---
 
 ## 1. Method overview
