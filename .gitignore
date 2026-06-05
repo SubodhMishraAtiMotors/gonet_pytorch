@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+*.conda
+.conda/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+wandb/
+runs/
+tensorboard/
+
+# Local datasets
+data/
+dataset/
+datasets_raw/
+go_stanford_dataset/
+warehouse_traversability_dataset/
+*/go_stanford_dataset/
+
+# Training checkpoints and model weights
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.onnx
+
+# Generated outputs
+outputs/
+results/
+inference_outputs/
+debug_outputs/
+
+# Generated media
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.gif
+
+# Generated plots / artifacts
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.json
+
+# Keep selected documentation/assets if explicitly added later
+!README.md
+!assets/
+!assets/.gitkeep
+!assets/*.png
+!assets/*.jpg
+!assets/*.jpeg
+!assets/*.gif
+
+# Environment files
+.env
+.env.*
+*.local
+
+# PyTorch / CUDA cache
+.cuda_cache/
+torch_cache/
+
+# Misc
+tmp/
+temp/
+.cache/
