@@ -1653,7 +1653,7 @@ evaluation on warehouse robot data
 
 ---
 
-## 18. Citation / acknowledgement
+## 27. Citation / acknowledgement
 
 This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
 
