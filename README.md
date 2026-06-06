@@ -13,8 +13,9 @@ The trained vanilla GONet model can be evaluated on the hand-labelled test split
 
 All results reported here use only the **GO Stanford** dataset.
 
-[GoNeT Results](https://drive.google.com/file/d/1wid69o3uo9oONMhqR66Z5DOh6pxvTg_6/view?usp=sharing)
-[GoNeT-T Results](https://drive.google.com/file/d/18NNnqVtur8415G0Joy84ZaiWidiDYG0h/view?usp=sharing)
+###[GoNeT Results](https://drive.google.com/file/d/1wid69o3uo9oONMhqR66Z5DOh6pxvTg_6/view?usp=sharing)
+
+###[GoNeT-T Results](https://drive.google.com/file/d/18NNnqVtur8415G0Joy84ZaiWidiDYG0h/view?usp=sharing)
 ---
 
 ## 1. Method overview
