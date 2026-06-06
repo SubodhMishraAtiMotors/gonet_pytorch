@@ -167,7 +167,6 @@ outputs/
 └── gonet_t_full_inference/
 ```
 
-Do not commit `checkpoints/`, `outputs/`, or the dataset to GitHub.
 
 ---
 
@@ -267,13 +266,13 @@ go_stanford_dataset/
         └── unlabel_R
 ```
 
-This README assumes your dataset is located at:
+Set the GO Stanford dataset path once before running the commands below:
 
 ```bash
-/home/subodh/Downloads/go_stanford_dataset
+export DATA_ROOT=/path/to/go_stanford_dataset
 ```
 
-Change this path in all commands if your dataset is somewhere else.
+All commands below use `$DATA_ROOT`. Replace `/path/to/go_stanford_dataset` with the actual location of your extracted GO Stanford dataset.
 
 ---
 
@@ -317,7 +316,7 @@ Before training, verify that the dataset loader produces normal-looking images.
 
 ```bash
 PYTHONPATH=. python tools/inspect_preprocessing.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --dataset-type positive \
   --split train \
   --side both \
@@ -335,7 +334,7 @@ Also inspect the hand-labelled data:
 
 ```bash
 PYTHONPATH=. python tools/inspect_preprocessing.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --dataset-type labelled \
   --split train \
   --side both \
@@ -392,7 +391,7 @@ Run a smoke test first:
 
 ```bash
 PYTHONPATH=. python train_gan.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --output-dir checkpoints/gonet_gan_smoke \
   --epochs 1 \
   --batch-size 32 \
@@ -406,7 +405,7 @@ Then train:
 
 ```bash
 PYTHONPATH=. python train_gan.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --output-dir checkpoints/gonet_gan \
   --epochs 50 \
   --batch-size 64 \
@@ -469,7 +468,7 @@ Smoke test:
 
 ```bash
 PYTHONPATH=. python train_invg.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --output-dir checkpoints/gonet_invg_smoke \
   --epochs 1 \
@@ -484,7 +483,7 @@ Train:
 
 ```bash
 PYTHONPATH=. python train_invg.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --output-dir checkpoints/gonet_invg \
   --epochs 30 \
@@ -541,7 +540,7 @@ Run:
 
 ```bash
 PYTHONPATH=. python train_fl.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --invg-checkpoint checkpoints/gonet_invg/invg_latest.pt \
   --output-dir checkpoints/gonet_fl \
@@ -581,7 +580,7 @@ Evaluate using the hand-labelled test split:
 
 ```bash
 PYTHONPATH=. python evaluate_gonet.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output-dir outputs/gonet_eval_test \
   --split test \
@@ -687,7 +686,7 @@ Re-evaluate at the selected threshold:
 
 ```bash
 PYTHONPATH=. python evaluate_gonet.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output-dir outputs/gonet_eval_test_thr085 \
   --split test \
@@ -727,7 +726,7 @@ Run a quick test on 200 frames:
 
 ```bash
 PYTHONPATH=. python tools/infer_unlablelled_gs.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
   --side L \
@@ -754,7 +753,7 @@ Run full left-camera unlabelled inference video:
 
 ```bash
 PYTHONPATH=. python tools/infer_unlablelled_gs.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
   --side L \
@@ -768,7 +767,7 @@ Run full right-camera unlabelled inference video:
 
 ```bash
 PYTHONPATH=. python tools/infer_unlablelled_gs.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
   --side R \
@@ -849,7 +848,7 @@ Build manifests for training unlabelled left/right frames:
 
 ```bash
 PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --split train \
   --side L \
   --output-dir outputs/gonet_t_manifests
@@ -857,7 +856,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 
 ```bash
 PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --split train \
   --side R \
   --output-dir outputs/gonet_t_manifests
@@ -1264,7 +1263,7 @@ whole_dataset/data_vali/unlabel_R
 
 ```bash
 PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --split test \
   --side L \
   --output-dir outputs/gonet_t_manifests
@@ -1272,7 +1271,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 
 ```bash
 PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --split test \
   --side R \
   --output-dir outputs/gonet_t_manifests
@@ -1282,7 +1281,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 
 ```bash
 PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --split val \
   --side L \
   --output-dir outputs/gonet_t_manifests
@@ -1290,7 +1289,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 
 ```bash
 PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --split val \
   --side R \
   --output-dir outputs/gonet_t_manifests
@@ -1654,32 +1653,7 @@ evaluation on warehouse robot data
 
 ---
 
-## 18. Portfolio positioning
-
-This repository should be described as:
-
-```text
-A PyTorch reproduction and analysis of GONet for monocular image-level traversability estimation.
-```
-
-It demonstrates:
-
-```text
-research-code understanding
-PyTorch implementation
-GAN training
-inverse-generator training
-binary classifier training
-evaluation with ROC/PR metrics
-safety-oriented threshold tuning
-inference video generation
-```
-
-Do not claim that this is production-ready. It is a research reproduction and robotics perception prototype.
-
----
-
-## 19. Citation / acknowledgement
+## 18. Citation / acknowledgement
 
 This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
 
