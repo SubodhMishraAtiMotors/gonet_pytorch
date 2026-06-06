@@ -191,6 +191,12 @@ Install remaining dependencies:
 pip install opencv-python numpy matplotlib tqdm scikit-learn pillow pandas
 ```
 
+Install this repository in editable mode so local modules such as `datasets` and `models` can be imported from any script without setting `PYTHONPATH`:
+
+```bash
+pip install -e .
+```
+
 Verify installation:
 
 ```bash
@@ -315,7 +321,7 @@ were meant for the raw live camera stream, not for the already-preprocessed data
 Before training, verify that the dataset loader produces normal-looking images.
 
 ```bash
-PYTHONPATH=. python tools/inspect_preprocessing.py \
+python tools/inspect_preprocessing.py \
   --data-root $DATA_ROOT \
   --dataset-type positive \
   --split train \
@@ -333,7 +339,7 @@ xdg-open outputs/preprocessing_positive_debug
 Also inspect the hand-labelled data:
 
 ```bash
-PYTHONPATH=. python tools/inspect_preprocessing.py \
+python tools/inspect_preprocessing.py \
   --data-root $DATA_ROOT \
   --dataset-type labelled \
   --split train \
@@ -357,7 +363,7 @@ The images should look normal and not completely dark.
 Run:
 
 ```bash
-PYTHONPATH=. python models/gonet.py
+python models/gonet.py
 ```
 
 Expected output:
@@ -390,7 +396,7 @@ It does **not** use negative or unlabelled images.
 Run a smoke test first:
 
 ```bash
-PYTHONPATH=. python train_gan.py \
+python train_gan.py \
   --data-root $DATA_ROOT \
   --output-dir checkpoints/gonet_gan_smoke \
   --epochs 1 \
@@ -404,7 +410,7 @@ PYTHONPATH=. python train_gan.py \
 Then train:
 
 ```bash
-PYTHONPATH=. python train_gan.py \
+python train_gan.py \
   --data-root $DATA_ROOT \
   --output-dir checkpoints/gonet_gan \
   --epochs 50 \
@@ -467,7 +473,7 @@ The generator is frozen. Only `InvG` is trained.
 Smoke test:
 
 ```bash
-PYTHONPATH=. python train_invg.py \
+python train_invg.py \
   --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --output-dir checkpoints/gonet_invg_smoke \
@@ -482,7 +488,7 @@ PYTHONPATH=. python train_invg.py \
 Train:
 
 ```bash
-PYTHONPATH=. python train_invg.py \
+python train_invg.py \
   --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --output-dir checkpoints/gonet_invg \
@@ -539,7 +545,7 @@ The generator, discriminator, and `InvG` are frozen. Only the classifier is trai
 Run:
 
 ```bash
-PYTHONPATH=. python train_fl.py \
+python train_fl.py \
   --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --invg-checkpoint checkpoints/gonet_invg/invg_latest.pt \
@@ -579,7 +585,7 @@ checkpoints/gonet_fl/fl_best.pt
 Evaluate using the hand-labelled test split:
 
 ```bash
-PYTHONPATH=. python evaluate_gonet.py \
+python evaluate_gonet.py \
   --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output-dir outputs/gonet_eval_test \
@@ -685,7 +691,7 @@ to:
 Re-evaluate at the selected threshold:
 
 ```bash
-PYTHONPATH=. python evaluate_gonet.py \
+python evaluate_gonet.py \
   --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output-dir outputs/gonet_eval_test_thr085 \
@@ -725,7 +731,7 @@ write per-frame CSV
 Run a quick test on 200 frames:
 
 ```bash
-PYTHONPATH=. python tools/infer_unlablelled_gs.py \
+python tools/infer_unlablelled_gs.py \
   --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
@@ -752,7 +758,7 @@ xdg-open outputs/unlabelled_inference_videos
 Run full left-camera unlabelled inference video:
 
 ```bash
-PYTHONPATH=. python tools/infer_unlablelled_gs.py \
+python tools/infer_unlablelled_gs.py \
   --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
@@ -766,7 +772,7 @@ PYTHONPATH=. python tools/infer_unlablelled_gs.py \
 Run full right-camera unlabelled inference video:
 
 ```bash
-PYTHONPATH=. python tools/infer_unlablelled_gs.py \
+python tools/infer_unlablelled_gs.py \
   --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
@@ -847,7 +853,7 @@ No frames are discarded during manifest creation.
 Build manifests for training unlabelled left/right frames:
 
 ```bash
-PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+python tools/build_unlabelled_sequence_manifest.py \
   --data-root $DATA_ROOT \
   --split train \
   --side L \
@@ -855,7 +861,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+python tools/build_unlabelled_sequence_manifest.py \
   --data-root $DATA_ROOT \
   --split train \
   --side R \
@@ -934,7 +940,7 @@ prob_traversable
 Generate pseudo-labels for train unlabelled L/R:
 
 ```bash
-PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+python tools/pseudo_label_unlabelled_manifest.py \
   --manifest outputs/gonet_t_manifests/train_unlabel_L_manifest.csv \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
@@ -943,7 +949,7 @@ PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+python tools/pseudo_label_unlabelled_manifest.py \
   --manifest outputs/gonet_t_manifests/train_unlabel_R_manifest.csv \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
@@ -966,7 +972,7 @@ These pseudo-labels are used as temporal training targets for GONet+T.
 Before training the LSTM, inspect vanilla GONet probabilities over time:
 
 ```bash
-PYTHONPATH=. python tools/visualize_pseudo_labels.py \
+python tools/visualize_pseudo_labels.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
   --output-dir outputs/gonet_t_visual_checks/train_unlabel_L \
   --top-k 10 \
@@ -977,7 +983,7 @@ PYTHONPATH=. python tools/visualize_pseudo_labels.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/visualize_pseudo_labels.py \
+python tools/visualize_pseudo_labels.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
   --output-dir outputs/gonet_t_visual_checks/train_unlabel_R \
   --top-k 10 \
@@ -1022,7 +1028,7 @@ No frames are discarded.
 Inspect the temporal dataset:
 
 ```bash
-PYTHONPATH=. python tools/inspect_temporal_dataset.py \
+python tools/inspect_temporal_dataset.py \
   --pseudo-csv \
     outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
     outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
@@ -1051,7 +1057,7 @@ One padded batch:
 Verify the temporal model definitions:
 
 ```bash
-PYTHONPATH=. python models/gonet_temporal.py
+python models/gonet_temporal.py
 ```
 
 Expected output:
@@ -1131,7 +1137,7 @@ The temporal model learns an unbounded confidence score and converts it back to 
 Train the best logit-space GONet+T model:
 
 ```bash
-PYTHONPATH=. python train_gonet_t.py \
+python train_gonet_t.py \
   --pseudo-csv \
     outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
     outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
@@ -1151,7 +1157,7 @@ PYTHONPATH=. python train_gonet_t.py \
 If interrupted, resume with:
 
 ```bash
-PYTHONPATH=. python train_gonet_t.py \
+python train_gonet_t.py \
   --pseudo-csv \
     outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
     outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
@@ -1190,7 +1196,7 @@ comparison CSV
 Example for left-camera train segments:
 
 ```bash
-PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
+python tools/compare_gonet_vs_gonet_t.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1206,7 +1212,7 @@ PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
 Example for right-camera train segments:
 
 ```bash
-PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
+python tools/compare_gonet_vs_gonet_t.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1222,7 +1228,7 @@ PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
 Or generate top-k segment comparisons automatically:
 
 ```bash
-PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
+python tools/compare_gonet_vs_gonet_t.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1262,7 +1268,7 @@ whole_dataset/data_vali/unlabel_R
 ### Build test manifests
 
 ```bash
-PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+python tools/build_unlabelled_sequence_manifest.py \
   --data-root $DATA_ROOT \
   --split test \
   --side L \
@@ -1270,7 +1276,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+python tools/build_unlabelled_sequence_manifest.py \
   --data-root $DATA_ROOT \
   --split test \
   --side R \
@@ -1280,7 +1286,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 ### Build validation manifests
 
 ```bash
-PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+python tools/build_unlabelled_sequence_manifest.py \
   --data-root $DATA_ROOT \
   --split val \
   --side L \
@@ -1288,7 +1294,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+python tools/build_unlabelled_sequence_manifest.py \
   --data-root $DATA_ROOT \
   --split val \
   --side R \
@@ -1298,7 +1304,7 @@ PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
 ### Generate pseudo-labels for test and validation
 
 ```bash
-PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+python tools/pseudo_label_unlabelled_manifest.py \
   --manifest outputs/gonet_t_manifests/test_unlabel_L_manifest.csv \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
@@ -1307,7 +1313,7 @@ PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+python tools/pseudo_label_unlabelled_manifest.py \
   --manifest outputs/gonet_t_manifests/test_unlabel_R_manifest.csv \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output outputs/gonet_t_pseudo_labels/test_unlabel_R_pseudo.csv \
@@ -1316,7 +1322,7 @@ PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+python tools/pseudo_label_unlabelled_manifest.py \
   --manifest outputs/gonet_t_manifests/val_unlabel_L_manifest.csv \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output outputs/gonet_t_pseudo_labels/val_unlabel_L_pseudo.csv \
@@ -1325,7 +1331,7 @@ PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+python tools/pseudo_label_unlabelled_manifest.py \
   --manifest outputs/gonet_t_manifests/val_unlabel_R_manifest.csv \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output outputs/gonet_t_pseudo_labels/val_unlabel_R_pseudo.csv \
@@ -1338,7 +1344,7 @@ PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
 This computes GONet+T probabilities for every unlabelled frame and writes one full comparison CSV per split/side.
 
 ```bash
-PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+python tools/run_gonet_t_full_inference.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1349,7 +1355,7 @@ PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+python tools/run_gonet_t_full_inference.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_R_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1360,7 +1366,7 @@ PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+python tools/run_gonet_t_full_inference.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/val_unlabel_L_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1371,7 +1377,7 @@ PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
 ```
 
 ```bash
-PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+python tools/run_gonet_t_full_inference.py \
   --pseudo-csv outputs/gonet_t_pseudo_labels/val_unlabel_R_pseudo.csv \
   --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
   --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
@@ -1471,74 +1477,20 @@ checkpoints/gonet_invg/invg_latest.pt
 
 ---
 
-## 23. Optional — Remove `PYTHONPATH=.`
-
-Currently, commands use:
-
-```bash
-PYTHONPATH=. python ...
-```
-
-because the scripts import local packages:
-
-```python
-from datasets.go_stanford import ...
-from models.gonet import ...
-```
-
-To remove the need for `PYTHONPATH=.`, create `pyproject.toml`:
-
-```toml
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "gonet-pytorch"
-version = "0.1.0"
-description = "PyTorch reproduction of GONet for GO Stanford traversability estimation"
-requires-python = ">=3.10"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["datasets*", "models*", "tools*"]
-```
-
-Then install in editable mode:
-
-```bash
-pip install -e .
-```
-
-After that, you can run:
-
-```bash
-python train_gan.py ...
-python train_invg.py ...
-python train_fl.py ...
-python evaluate_gonet.py ...
-python train_gonet_t.py ...
-python tools/infer_unlablelled_gs.py ...
-```
-
-without `PYTHONPATH=.`.
-
----
-
-## 24. Troubleshooting
+## 23. Troubleshooting
 
 ### `ModuleNotFoundError: No module named 'datasets'`
 
-Run from the repository root using:
-
-```bash
-PYTHONPATH=. python ...
-```
-
-or install the repo in editable mode:
+Install the repository in editable mode from the repository root:
 
 ```bash
 pip install -e .
+```
+
+Then rerun the command as normal:
+
+```bash
+python <script_name>.py ...
 ```
 
 ---
@@ -1591,7 +1543,7 @@ Do not blindly use `gan_latest.pt` if the generated samples have degraded.
 
 ---
 
-## 25. Data used by each training stage
+## 24. Data used by each training stage
 
 | Stage | Dataset folders | Labels? | Purpose |
 |---|---|---:|---|
@@ -1620,7 +1572,7 @@ with `drop_last=True`.
 
 ---
 
-## 26. Limitations
+## 25. Limitations
 
 This is an image-level traversability classifier.
 
@@ -1653,7 +1605,7 @@ evaluation on warehouse robot data
 
 ---
 
-## 27. Citation / acknowledgement
+## 26. Citation / acknowledgement
 
 This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
 
