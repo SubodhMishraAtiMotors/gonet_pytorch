@@ -1,6 +1,6 @@
 # GONet PyTorch Traversability Estimation
 
-PyTorch reproduction of the **GONet** monocular image-level traversability pipeline using the **GO Stanford** dataset.
+PyTorch reproduction of the [**GONet**](https://github.com/NHirose/GONET) monocular image-level traversability pipeline using the [**GO Stanford**](https://cvgl.stanford.edu/gonet/dataset/) dataset.
 
 This repository trains a GAN-based traversability estimator in three stages and then extends it with a temporal LSTM model, **GONet+T**:
 
@@ -13,6 +13,8 @@ The trained vanilla GONet model can be evaluated on the hand-labelled test split
 
 All results reported here use only the **GO Stanford** dataset.
 
+[GoNeT Results](https://drive.google.com/file/d/1wid69o3uo9oONMhqR66Z5DOh6pxvTg_6/view?usp=sharing)
+[GoNeT-T Results](https://drive.google.com/file/d/18NNnqVtur8415G0Joy84ZaiWidiDYG0h/view?usp=sharing)
 ---
 
 ## 1. Method overview
@@ -1607,6 +1609,6 @@ evaluation on warehouse robot data
 
 ## 26. Citation / acknowledgement
 
-This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
+This project is based on the [**GONet**](https://github.com/NHirose/GONET) traversability-estimation idea and the [GO Stanford dataset](https://cvgl.stanford.edu/gonet/dataset/).
 
 Please cite and acknowledge the original GONet authors and dataset source when using this repository publicly.
