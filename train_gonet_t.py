@@ -26,6 +26,7 @@ from models.gonet_temporal import (
     masked_prediction_loss,
     masked_smoothness_loss,
     init_temporal_weights,
+    prob_to_logit,
 )
 
 
@@ -102,7 +103,6 @@ def load_resume_checkpoint(resume_path, model, optimizer, device):
     if "optimizer" in ckpt and optimizer is not None:
         optimizer.load_state_dict(ckpt["optimizer"])
 
-        # Move optimizer state tensors to device.
         for state in optimizer.state.values():
             for key, value in state.items():
                 if torch.is_tensor(value):
@@ -169,14 +169,14 @@ def main():
     parser.add_argument(
         "--lambda-pred",
         type=float,
-        default=0.5,
+        default=0.8,
         help="Weight for prediction loss.",
     )
 
     parser.add_argument(
         "--lambda-smooth",
         type=float,
-        default=0.5,
+        default=0.2,
         help="Weight for temporal smoothness loss.",
     )
 
@@ -192,12 +192,26 @@ def main():
         choices=["mse", "l1"],
     )
 
+    parser.add_argument(
+        "--target-mode",
+        default="prob",
+        choices=["prob", "logit"],
+        help="Train GONet+T to match probabilities or logits of vanilla GONet.",
+    )
+
+    parser.add_argument(
+        "--logit-eps",
+        type=float,
+        default=1e-4,
+        help="Clamp epsilon used for probability-to-logit conversion.",
+    )
+
     parser.add_argument("--save-every", type=int, default=5)
 
     parser.add_argument(
         "--resume",
         default=None,
-        help="Path to GONet+T checkpoint to resume from, e.g. checkpoints/gonet_t/gonet_t_latest.pt",
+        help="Path to GONet+T checkpoint to resume from.",
     )
 
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
@@ -213,6 +227,7 @@ def main():
         device = "cpu"
 
     print(f"Using device: {device}")
+    print(f"Target mode: {args.target_mode}")
 
     with open(output_dir / "config.json", "w") as f:
         json.dump(vars(args), f, indent=2)
@@ -325,17 +340,37 @@ def main():
 
             for batch in pbar:
                 images = batch["images"].to(device, non_blocking=True)
-                labels = batch["labels"].to(device, non_blocking=True)
+                labels_prob = batch["labels"].to(device, non_blocking=True)
                 mask = batch["mask"].to(device, non_blocking=True)
                 lengths = batch["lengths"].to(device, non_blocking=True)
 
                 optimizer.zero_grad(set_to_none=True)
 
-                preds = model(images, lengths=lengths)
+                if args.target_mode == "prob":
+                    preds = model(
+                        images,
+                        lengths=lengths,
+                        return_logits=False,
+                    )
+                    targets = labels_prob
+
+                elif args.target_mode == "logit":
+                    preds = model(
+                        images,
+                        lengths=lengths,
+                        return_logits=True,
+                    )
+                    targets = prob_to_logit(
+                        labels_prob,
+                        eps=args.logit_eps,
+                    )
+
+                else:
+                    raise ValueError(f"Unsupported target mode: {args.target_mode}")
 
                 pred_loss = masked_prediction_loss(
                     preds=preds,
-                    targets=labels,
+                    targets=targets,
                     mask=mask,
                     loss_type=args.prediction_loss,
                 )
@@ -426,11 +461,6 @@ def main():
         )
 
         print(f"Saved: {output_dir / 'gonet_t_interrupted.pt'}")
-        print("Resume later with:")
-        print(
-            f"  PYTHONPATH=. python train_gonet_t.py "
-            f"--resume {output_dir / 'gonet_t_interrupted.pt'} ..."
-        )
         return
 
     print()

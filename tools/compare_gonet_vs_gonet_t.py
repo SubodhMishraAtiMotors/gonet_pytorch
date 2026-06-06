@@ -39,18 +39,40 @@ def load_backbone_from_gonet_checkpoint(checkpoint_path, device, nz=100, use_tan
     return generator, invg, discriminator
 
 
+def infer_temporal_config_from_checkpoint(ckpt, args):
+    """
+    Prefer config stored in checkpoint. Fall back to CLI args.
+    """
+
+    ckpt_args = ckpt.get("args", {})
+
+    config = {
+        "target_mode": ckpt_args.get("target_mode", args.target_mode),
+        "reduced_dim": int(ckpt_args.get("reduced_dim", args.reduced_dim)),
+        "hidden_dim": int(ckpt_args.get("hidden_dim", args.hidden_dim)),
+        "num_layers": int(ckpt_args.get("num_layers", args.num_layers)),
+        "dropout": float(ckpt_args.get("dropout", args.dropout)),
+        "bidirectional": bool(ckpt_args.get("bidirectional", args.bidirectional)),
+    }
+
+    return config
+
+
 def load_gonet_t(
     gonet_checkpoint,
     gonet_t_checkpoint,
     device,
+    args,
     nz=100,
     use_tanh=False,
-    reduced_dim=10,
-    hidden_dim=64,
-    num_layers=1,
-    dropout=0.0,
-    bidirectional=False,
 ):
+    temporal_ckpt = torch.load(gonet_t_checkpoint, map_location=device)
+    temporal_config = infer_temporal_config_from_checkpoint(temporal_ckpt, args)
+
+    print("Loaded GONet+T config:")
+    for k, v in temporal_config.items():
+        print(f"  {k}: {v}")
+
     generator, invg, discriminator = load_backbone_from_gonet_checkpoint(
         checkpoint_path=gonet_checkpoint,
         device=device,
@@ -59,15 +81,15 @@ def load_gonet_t(
     )
 
     feature_reducer = GONetTemporalFeatureReducer(
-        reduced_dim=reduced_dim,
+        reduced_dim=temporal_config["reduced_dim"],
     ).to(device)
 
     temporal_classifier = GONetTemporalClassifier(
-        input_dim=3 * reduced_dim,
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        dropout=dropout,
-        bidirectional=bidirectional,
+        input_dim=3 * temporal_config["reduced_dim"],
+        hidden_dim=temporal_config["hidden_dim"],
+        num_layers=temporal_config["num_layers"],
+        dropout=temporal_config["dropout"],
+        bidirectional=temporal_config["bidirectional"],
     ).to(device)
 
     model = GONetTemporalFull(
@@ -80,14 +102,12 @@ def load_gonet_t(
 
     model.freeze_gonet_backbone()
 
-    ckpt = torch.load(gonet_t_checkpoint, map_location=device)
-
-    model.feature_reducer.load_state_dict(ckpt["feature_reducer"])
-    model.temporal_classifier.load_state_dict(ckpt["temporal_classifier"])
+    model.feature_reducer.load_state_dict(temporal_ckpt["feature_reducer"])
+    model.temporal_classifier.load_state_dict(temporal_ckpt["temporal_classifier"])
 
     model.eval()
 
-    return model
+    return model, temporal_config
 
 
 def load_segment_images(segment_df, output_size=128):
@@ -121,8 +141,8 @@ def infer_gonet_t_sequence(model, images, device, feature_chunk_size=64):
     """
     Runs GONet+T on a full segment.
 
-    To avoid GPU memory spikes, GONet backbone feature extraction is done
-    in chunks, but the LSTM still sees the full segment at once.
+    Backbone feature extraction is done in chunks to avoid memory spikes.
+    The LSTM still sees the complete segment.
     """
 
     model.eval()
@@ -136,19 +156,23 @@ def infer_gonet_t_sequence(model, images, device, feature_chunk_size=64):
         end = min(start + feature_chunk_size, total_frames)
 
         chunk = images[start:end].unsqueeze(0)  # [1, Tc, 3, 128, 128]
-
         features = model.extract_temporal_features(chunk)  # [1, Tc, 30]
-        feature_chunks.append(features.cpu())
+
+        feature_chunks.append(features.detach().cpu())
 
     temporal_features = torch.cat(feature_chunks, dim=1).to(device)  # [1, T, 30]
-
     lengths = torch.tensor([total_frames], dtype=torch.long, device=device)
 
-    probs = model.temporal_classifier(
+    # Always get logits, then sigmoid.
+    # This works for both probability-space and logit-space trained models
+    # because the classifier always has a raw linear output before sigmoid.
+    logits = model.temporal_classifier(
         temporal_features=temporal_features,
         lengths=lengths,
+        return_logits=True,
     )
 
+    probs = torch.sigmoid(logits)
     probs = probs.squeeze(0).squeeze(-1).detach().cpu().tolist()
 
     return probs
@@ -185,6 +209,7 @@ def write_comparison_csv(segment_df, temporal_probs, threshold, output_path):
 
     for (_, row), temporal_prob in zip(segment_df.iterrows(), temporal_probs):
         vanilla_prob = float(row["prob_traversable"])
+        temporal_prob = float(temporal_prob)
 
         rows.append({
             "segment_id": int(row["segment_id"]),
@@ -195,11 +220,11 @@ def write_comparison_csv(segment_df, temporal_probs, threshold, output_path):
             "filename": row["filename"],
             "path": row["path"],
             "vanilla_prob": vanilla_prob,
-            "gonet_t_prob": float(temporal_prob),
+            "gonet_t_prob": temporal_prob,
             "threshold": float(threshold),
             "vanilla_decision": "GO" if vanilla_prob >= threshold else "NO_GO",
             "gonet_t_decision": "GO" if temporal_prob >= threshold else "NO_GO",
-            "abs_difference": abs(float(temporal_prob) - vanilla_prob),
+            "abs_difference": abs(temporal_prob - vanilla_prob),
         })
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,11 +261,10 @@ def draw_comparison_overlay(
     vanilla_decision = "GO" if vanilla_prob >= threshold else "NO-GO"
     temporal_decision = "GO" if temporal_prob >= threshold else "NO-GO"
 
-    temporal_color = (0, 180, 0) if temporal_decision == "GO" else (0, 0, 220)
     vanilla_color = (0, 180, 0) if vanilla_decision == "GO" else (0, 0, 220)
+    temporal_color = (0, 180, 0) if temporal_decision == "GO" else (0, 0, 220)
 
-    # Header
-    cv2.rectangle(image_bgr, (0, 0), (out_w, 125), (0, 0, 0), -1)
+    cv2.rectangle(image_bgr, (0, 0), (out_w, 130), (0, 0, 0), -1)
 
     cv2.putText(
         image_bgr,
@@ -267,7 +291,7 @@ def draw_comparison_overlay(
     cv2.putText(
         image_bgr,
         f"threshold={threshold:.2f} | build={building_id}, side={side}, segment={segment_id}, frame={frame_idx}",
-        (15, 98),
+        (15, 100),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
         (230, 230, 230),
@@ -275,7 +299,6 @@ def draw_comparison_overlay(
         cv2.LINE_AA,
     )
 
-    # Bottom filename strip
     cv2.rectangle(image_bgr, (0, out_h - 35), (out_w, out_h), (0, 0, 0), -1)
 
     cv2.putText(
@@ -289,7 +312,7 @@ def draw_comparison_overlay(
         cv2.LINE_AA,
     )
 
-    # Border uses GONet+T decision
+    # Border uses GONet+T decision.
     cv2.rectangle(
         image_bgr,
         (0, 0),
@@ -360,6 +383,20 @@ def select_segments(df, segment_ids=None, top_k=5, min_length=1):
     return selected
 
 
+def print_segment_summary(segment_df, temporal_probs, threshold):
+    vanilla = segment_df["prob_traversable"].astype(float).values
+    temporal = pd.Series(temporal_probs).values
+
+    vanilla_go = (vanilla >= threshold).sum()
+    temporal_go = (temporal >= threshold).sum()
+
+    print(f"Mean vanilla prob:      {vanilla.mean():.4f}")
+    print(f"Mean GONet+T prob:      {temporal.mean():.4f}")
+    print(f"Mean abs difference:    {abs(vanilla - temporal).mean():.4f}")
+    print(f"Vanilla GO frames:      {vanilla_go}/{len(vanilla)}")
+    print(f"GONet+T GO frames:      {temporal_go}/{len(temporal)}")
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -411,6 +448,8 @@ def main():
     parser.add_argument("--nz", type=int, default=100)
     parser.add_argument("--use-tanh", action="store_true")
 
+    # Fallback values used only if checkpoint has no stored config.
+    parser.add_argument("--target-mode", default="prob", choices=["prob", "logit"])
     parser.add_argument("--reduced-dim", type=int, default=10)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=1)
@@ -453,17 +492,13 @@ def main():
     print()
     print("Selected segments:", selected_segments)
 
-    model = load_gonet_t(
+    model, temporal_config = load_gonet_t(
         gonet_checkpoint=Path(args.gonet_checkpoint),
         gonet_t_checkpoint=Path(args.gonet_t_checkpoint),
         device=device,
+        args=args,
         nz=args.nz,
         use_tanh=args.use_tanh,
-        reduced_dim=args.reduced_dim,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-        bidirectional=args.bidirectional,
     )
 
     for segment_id in selected_segments:
@@ -495,11 +530,14 @@ def main():
             feature_chunk_size=args.feature_chunk_size,
         )
 
+        target_mode = temporal_config.get("target_mode", "unknown")
+
         base_name = (
             f"segment_{segment_id:05d}_"
             f"build{int(first['building_id'])}_"
             f"{first['side']}_"
-            f"{int(first['frame_idx'])}_{int(last['frame_idx'])}"
+            f"{int(first['frame_idx'])}_{int(last['frame_idx'])}_"
+            f"gonet_t_{target_mode}"
         )
 
         plot_path = output_dir / f"{base_name}_plot.png"
@@ -530,15 +568,15 @@ def main():
             output_path=csv_path,
         )
 
-        vanilla = segment_df["prob_traversable"].astype(float).values
-        temporal = pd.Series(temporal_probs).values
-
         print(f"Saved plot:  {plot_path}")
         print(f"Saved video: {video_path}")
         print(f"Saved CSV:   {csv_path}")
-        print(f"Mean vanilla prob: {vanilla.mean():.4f}")
-        print(f"Mean GONet+T prob: {temporal.mean():.4f}")
-        print(f"Mean abs difference: {abs(vanilla - temporal).mean():.4f}")
+
+        print_segment_summary(
+            segment_df=segment_df,
+            temporal_probs=temporal_probs,
+            threshold=args.threshold,
+        )
 
 
 if __name__ == "__main__":

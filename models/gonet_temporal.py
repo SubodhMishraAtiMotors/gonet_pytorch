@@ -17,12 +17,6 @@ class GONetTemporalFeatureReducer(nn.Module):
 
     Output:
         features: [N, 30]
-
-    This follows the paper's GONet+T idea:
-        phi_R -> FC -> 10D
-        phi_D -> FC -> 10D
-        phi_F -> FC -> 10D
-        concat -> 30D
     """
 
     def __init__(self, reduced_dim: int = 10):
@@ -74,10 +68,10 @@ class GONetTemporalClassifier(nn.Module):
 
     Input:
         temporal_features: [B, T, input_dim]
-        lengths: [B]
 
     Output:
-        probs: [B, T, 1]
+        logits: [B, T, 1]
+        or probs: [B, T, 1]
     """
 
     def __init__(
@@ -107,21 +101,21 @@ class GONetTemporalClassifier(nn.Module):
         )
 
         out_dim = hidden_dim * (2 if bidirectional else 1)
-
         self.output = nn.Linear(out_dim, 1)
 
     def forward(
         self,
         temporal_features: torch.Tensor,
         lengths: torch.Tensor = None,
+        return_logits: bool = False,
     ) -> torch.Tensor:
-        # Simple masked-training version.
-        # We use padded sequences directly. The loss mask will ignore padding.
-        # This is easier to debug than pack_padded_sequence.
         h, _ = self.lstm(temporal_features)
         logits = self.output(h)
-        probs = torch.sigmoid(logits)
 
+        if return_logits:
+            return logits
+
+        probs = torch.sigmoid(logits)
         return probs
 
 
@@ -140,7 +134,7 @@ class GONetTemporalFull(nn.Module):
         images: [B, T, 3, 128, 128]
 
     Output:
-        probs: [B, T, 1]
+        probs or logits: [B, T, 1]
     """
 
     def __init__(
@@ -178,7 +172,6 @@ class GONetTemporalFull(nn.Module):
         """
 
         b, t, c, h, w = images.shape
-
         flat_images = images.reshape(b * t, c, h, w)
 
         with torch.no_grad():
@@ -205,13 +198,26 @@ class GONetTemporalFull(nn.Module):
         self,
         images: torch.Tensor,
         lengths: torch.Tensor = None,
+        return_logits: bool = False,
     ) -> torch.Tensor:
         temporal_features = self.extract_temporal_features(images)
-        probs = self.temporal_classifier(
+        output = self.temporal_classifier(
             temporal_features=temporal_features,
             lengths=lengths,
+            return_logits=return_logits,
         )
-        return probs
+        return output
+
+
+def prob_to_logit(prob: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
+    """
+    Converts probability to logit safely.
+
+    p = 0.85 -> logit ~= 1.73
+    """
+
+    prob = torch.clamp(prob, eps, 1.0 - eps)
+    return torch.log(prob / (1.0 - prob))
 
 
 def masked_prediction_loss(
@@ -248,14 +254,10 @@ def masked_smoothness_loss(
     loss_type: str = "l1",
 ) -> torch.Tensor:
     """
-    Smoothness loss between consecutive valid predictions.
+    First-order smoothness loss between consecutive valid predictions.
 
     preds: [B, T, 1]
     mask:  [B, T]
-
-    Computes loss on pairs:
-        t and t+1
-    only when both are valid.
     """
 
     if preds.size(1) < 2:
@@ -328,15 +330,18 @@ if __name__ == "__main__":
 
     x = torch.randn(2, 11, 3, 128, 128).to(device)
     mask = torch.ones(2, 11, dtype=torch.bool).to(device)
-    y = torch.rand(2, 11, 1).to(device)
+    y_prob = torch.rand(2, 11, 1).to(device)
+    y_logit = prob_to_logit(y_prob)
 
-    out = model(x)
+    out_prob = model(x, return_logits=False)
+    out_logit = model(x, return_logits=True)
 
-    loss_pred = masked_prediction_loss(out, y, mask)
-    loss_smooth = masked_smoothness_loss(out, mask)
+    loss_prob = masked_prediction_loss(out_prob, y_prob, mask)
+    loss_logit = masked_prediction_loss(out_logit, y_logit, mask)
 
     print("Device:", device)
     print("Input:", x.shape)
-    print("Output:", out.shape)
-    print("Prediction loss:", float(loss_pred.item()))
-    print("Smoothness loss:", float(loss_smooth.item()))
+    print("Output prob:", out_prob.shape)
+    print("Output logit:", out_logit.shape)
+    print("Prediction loss prob:", float(loss_prob.item()))
+    print("Prediction loss logit:", float(loss_logit.item()))
