@@ -1,17 +1,18 @@
-# [GONet](https://github.com/NHirose/GONET) PyTorch Traversability Estimation
+# GONet PyTorch Traversability Estimation
 
 PyTorch reproduction of the **GONet** monocular image-level traversability pipeline using the **GO Stanford** dataset.
 
-This repository trains a GAN-based traversability estimator in three stages:
+This repository trains a GAN-based traversability estimator in three stages and then extends it with a temporal LSTM model, **GONet+T**:
 
 1. Train a DCGAN on **positive/traversable** images.
 2. Train an inverse generator, `InvG`, to map real images into the GAN latent space.
 3. Train a final GONet classifier, `FL`, using hand-labelled positive and negative images.
+4. Train a GONet+T-style temporal model on pseudo-labelled unlabelled sequences.
 
-The trained model can then be evaluated on the hand-labelled test split and used to run inference on unlabelled frames, producing annotated videos with **GO / NO-GO** decisions.
+The trained vanilla GONet model can be evaluated on the hand-labelled test split and used to run inference on unlabelled frames, producing annotated videos with **GO / NO-GO** decisions. The GONet+T extension then smooths frame-wise traversability predictions over time using an LSTM.
 
-Check results here:
-[Go Stanford Video](https://drive.google.com/file/d/1KW_wh3gb5HvJM6Oo6VMbjmJRCk3imvuj/view?usp=sharing)
+All results reported here use only the **GO Stanford** dataset.
+
 ---
 
 ## 1. Method overview
@@ -59,6 +60,59 @@ probability close to 1 → GO / traversable
 probability close to 0 → NO-GO / non-traversable
 ```
 
+### GONet+T temporal extension
+
+The temporal extension keeps the trained GONet feature extraction idea, but applies it over image sequences.
+
+For each frame, the following three quantities are computed:
+
+```text
+φR = |image_real - image_generated|
+φD = |discriminator_feature_real - discriminator_feature_generated|
+φF = discriminator_feature_real
+```
+
+These are reduced into compact features:
+
+```text
+φR → Linear → 10D
+φD → Linear → 10D
+φF → Linear → 10D
+```
+
+The three 10D vectors are concatenated:
+
+```text
+temporal feature per frame = 30D
+```
+
+A single-layer LSTM then predicts a traversability score for each frame in the sequence:
+
+```text
+image sequence
+    ↓
+frozen Generator + InvG + Discriminator
+    ↓
+per-frame 30D GONet feature
+    ↓
+LSTM, hidden_dim = 64
+    ↓
+linear output
+    ↓
+sigmoid
+    ↓
+temporally smoothed traversability probability
+```
+
+Important design decision:
+
+```text
+GONet+T is trained as a temporal stabilizer of vanilla GONet outputs.
+It is not trained as a new classifier with new human labels.
+```
+
+In this reproduction, GONet+T is trained on pseudo-labels produced by the trained vanilla GONet model over unlabelled GO Stanford sequences.
+
 ---
 
 ## 2. Repository structure
@@ -69,17 +123,26 @@ Recommended repository layout:
 gonet_pytorch/
 ├── datasets/
 │   ├── __init__.py
-│   └── go_stanford.py
+│   ├── go_stanford.py
+│   └── go_stanford_temporal.py
 ├── models/
 │   ├── __init__.py
-│   └── gonet.py
+│   ├── gonet.py
+│   └── gonet_temporal.py
 ├── tools/
 │   ├── inspect_preprocessing.py
 │   ├── sweep_threshold.py
-│   └── infer_unlablelled_gs.py
+│   ├── infer_unlablelled_gs.py
+│   ├── build_unlabelled_sequence_manifest.py
+│   ├── pseudo_label_unlabelled_manifest.py
+│   ├── visualize_pseudo_labels.py
+│   ├── compare_gonet_vs_gonet_t.py
+│   ├── run_gonet_t_full_inference.py
+│   └── summarize_gonet_t_comparisons.py
 ├── train_gan.py
 ├── train_invg.py
 ├── train_fl.py
+├── train_gonet_t.py
 ├── evaluate_gonet.py
 ├── .gitignore
 └── README.md
@@ -91,15 +154,19 @@ Expected generated folders after training:
 checkpoints/
 ├── gonet_gan/
 ├── gonet_invg/
-└── gonet_fl/
+├── gonet_fl/
+└── gonet_t_logit_lpred05_lsmooth05/
 
 outputs/
 ├── gonet_eval_test/
 ├── gonet_eval_test_thr085/
-└── unlabelled_inference_videos/
+├── unlabelled_inference_videos/
+├── gonet_t_manifests/
+├── gonet_t_pseudo_labels/
+├── gonet_t_compare_best_logit/
+└── gonet_t_full_inference/
 ```
 
-Do not commit `checkpoints/`, `outputs/`, or the dataset to GitHub.
 
 ---
 
@@ -199,8 +266,13 @@ go_stanford_dataset/
         └── unlabel_R
 ```
 
+Set the GO Stanford dataset path once before running the commands below:
 
-Change the path to wherever the dataset is.
+```bash
+export DATA_ROOT=/path/to/go_stanford_dataset
+```
+
+All commands below use `$DATA_ROOT`. Replace `/path/to/go_stanford_dataset` with the actual location of your extracted GO Stanford dataset.
 
 ---
 
@@ -224,13 +296,27 @@ normalize from [0, 255] to approximately [-1, 1]
 CHW tensor
 ```
 
+Do **not** apply the circular fisheye crop/mask parameters from the original ROS code to the released GO Stanford images.
+
+Those original parameters:
+
+```python
+xc = 310
+yc = 321
+radius = 275
+```
+
+were meant for the raw live camera stream, not for the already-preprocessed dataset images.
+
+---
+
 ## 6. Step 2 — Inspect preprocessing
 
 Before training, verify that the dataset loader produces normal-looking images.
 
 ```bash
 PYTHONPATH=. python tools/inspect_preprocessing.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --dataset-type positive \
   --split train \
   --side both \
@@ -248,7 +334,7 @@ Also inspect the hand-labelled data:
 
 ```bash
 PYTHONPATH=. python tools/inspect_preprocessing.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --dataset-type labelled \
   --split train \
   --side both \
@@ -305,7 +391,7 @@ Run a smoke test first:
 
 ```bash
 PYTHONPATH=. python train_gan.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --output-dir checkpoints/gonet_gan_smoke \
   --epochs 1 \
   --batch-size 32 \
@@ -319,7 +405,7 @@ Then train:
 
 ```bash
 PYTHONPATH=. python train_gan.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --output-dir checkpoints/gonet_gan \
   --epochs 50 \
   --batch-size 64 \
@@ -382,7 +468,7 @@ Smoke test:
 
 ```bash
 PYTHONPATH=. python train_invg.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --output-dir checkpoints/gonet_invg_smoke \
   --epochs 1 \
@@ -397,7 +483,7 @@ Train:
 
 ```bash
 PYTHONPATH=. python train_invg.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --output-dir checkpoints/gonet_invg \
   --epochs 30 \
@@ -454,7 +540,7 @@ Run:
 
 ```bash
 PYTHONPATH=. python train_fl.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --gan-checkpoint checkpoints/gonet_gan/gan_epoch_0020.pt \
   --invg-checkpoint checkpoints/gonet_invg/invg_latest.pt \
   --output-dir checkpoints/gonet_fl \
@@ -494,7 +580,7 @@ Evaluate using the hand-labelled test split:
 
 ```bash
 PYTHONPATH=. python evaluate_gonet.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output-dir outputs/gonet_eval_test \
   --split test \
@@ -600,7 +686,7 @@ Re-evaluate at the selected threshold:
 
 ```bash
 PYTHONPATH=. python evaluate_gonet.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --output-dir outputs/gonet_eval_test_thr085 \
   --split test \
@@ -640,7 +726,7 @@ Run a quick test on 200 frames:
 
 ```bash
 PYTHONPATH=. python tools/infer_unlablelled_gs.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
   --side L \
@@ -667,7 +753,7 @@ Run full left-camera unlabelled inference video:
 
 ```bash
 PYTHONPATH=. python tools/infer_unlablelled_gs.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
   --side L \
@@ -681,7 +767,7 @@ Run full right-camera unlabelled inference video:
 
 ```bash
 PYTHONPATH=. python tools/infer_unlablelled_gs.py \
-  --data-root /home/subodh/Downloads/go_stanford_dataset \
+  --data-root $DATA_ROOT \
   --checkpoint checkpoints/gonet_fl/fl_best.pt \
   --split test \
   --side R \
@@ -714,7 +800,678 @@ decision
 
 ---
 
-## 14. Optional — Remove `PYTHONPATH=.`
+
+## 14. Step 10 — Build temporal manifests for GONet+T
+
+GONet+T requires temporal sequences rather than randomly shuffled images.
+
+The GO Stanford whole dataset filenames follow:
+
+```text
+img_buildX_Y_Z.jpg
+```
+
+where:
+
+```text
+X = building number
+Y = time order / frame index
+Z = camera side, L or R
+```
+
+For temporal modelling, frames are grouped by:
+
+```text
+building_id + side
+```
+
+and then split into contiguous temporal segments whenever the frame index has a gap.
+
+This is important. A building is not treated as one continuous sequence. For example:
+
+```text
+img_build10_1000_L.jpg
+img_build10_1001_L.jpg
+img_build10_1002_L.jpg
+
+gap
+
+img_build10_1027_L.jpg
+img_build10_1028_L.jpg
+```
+
+These become two different temporal segments.
+
+No frames are discarded during manifest creation.
+
+Build manifests for training unlabelled left/right frames:
+
+```bash
+PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+  --data-root $DATA_ROOT \
+  --split train \
+  --side L \
+  --output-dir outputs/gonet_t_manifests
+```
+
+```bash
+PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+  --data-root $DATA_ROOT \
+  --split train \
+  --side R \
+  --output-dir outputs/gonet_t_manifests
+```
+
+Outputs:
+
+```text
+outputs/gonet_t_manifests/
+├── train_unlabel_L_manifest.csv
+├── train_unlabel_L_segments.csv
+├── train_unlabel_R_manifest.csv
+└── train_unlabel_R_segments.csv
+```
+
+Each manifest row contains:
+
+```text
+global_index
+segment_id
+segment_local_index
+building_id
+frame_idx
+side
+filename
+path
+```
+
+Each segment summary contains:
+
+```text
+segment_id
+building_id
+side
+start_frame_idx
+end_frame_idx
+num_frames
+```
+
+In our train split setup:
+
+```text
+train unlabel L + R:
+4104 temporal segments
+102,712 frames
+minimum segment length: 2
+maximum segment length: 239
+mean segment length: ~25 frames
+```
+
+When using `--max-length 64` during training, long segments are split into chunks, but no frames are discarded:
+
+```text
+4298 chunks
+102,712 frames preserved
+maximum chunk length: 64
+```
+
+---
+
+## 15. Step 11 — Generate pseudo-labels for unlabelled sequences
+
+GONet+T is trained using pseudo-labels from vanilla GONet.
+
+The trained vanilla GONet checkpoint is applied to every unlabelled frame in the temporal manifests. The output probability becomes the pseudo-label:
+
+```text
+unlabelled frame
+    ↓
+vanilla GONet
+    ↓
+prob_traversable
+```
+
+Generate pseudo-labels for train unlabelled L/R:
+
+```bash
+PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+  --manifest outputs/gonet_t_manifests/train_unlabel_L_manifest.csv \
+  --checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+  --batch-size 128 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+  --manifest outputs/gonet_t_manifests/train_unlabel_R_manifest.csv \
+  --checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
+  --batch-size 128 \
+  --device cuda
+```
+
+The resulting CSVs contain all manifest columns plus:
+
+```text
+prob_traversable
+```
+
+These pseudo-labels are used as temporal training targets for GONet+T.
+
+---
+
+## 16. Step 12 — Visualize pseudo-labels before temporal training
+
+Before training the LSTM, inspect vanilla GONet probabilities over time:
+
+```bash
+PYTHONPATH=. python tools/visualize_pseudo_labels.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+  --output-dir outputs/gonet_t_visual_checks/train_unlabel_L \
+  --top-k 10 \
+  --threshold 0.85 \
+  --fps 3 \
+  --scale 4 \
+  --make-videos
+```
+
+```bash
+PYTHONPATH=. python tools/visualize_pseudo_labels.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
+  --output-dir outputs/gonet_t_visual_checks/train_unlabel_R \
+  --top-k 10 \
+  --threshold 0.85 \
+  --fps 3 \
+  --scale 4 \
+  --make-videos
+```
+
+Outputs include:
+
+```text
+segment probability plots
+annotated segment videos
+segment_probability_summary.csv
+```
+
+This helps check whether vanilla GONet is temporally noisy and whether GONet+T is likely to help.
+
+---
+
+## 17. Step 13 — Verify temporal dataset and model
+
+The temporal dataset returns variable-length segments:
+
+```text
+images: [T_i, 3, 128, 128]
+labels: [T_i, 1]
+mask:   [T_i]
+```
+
+The custom collate function pads a batch to the longest segment in the batch:
+
+```text
+images: [B, T_max, 3, 128, 128]
+labels: [B, T_max, 1]
+mask:   [B, T_max]
+```
+
+No frames are discarded.
+
+Inspect the temporal dataset:
+
+```bash
+PYTHONPATH=. python tools/inspect_temporal_dataset.py \
+  --pseudo-csv \
+    outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+    outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
+  --batch-size 4 \
+  --min-length 1 \
+  --max-length 64 \
+  --num-workers 0
+```
+
+Expected output:
+
+```text
+Dataset summary:
+  num_segments: 4298
+  num_frames: 102712
+  min_length: 1
+  max_length: 64
+  mean_length: ~23.9
+
+One padded batch:
+  images: torch.Size([4, T_max, 3, 128, 128])
+  labels: torch.Size([4, T_max, 1])
+  mask: torch.Size([4, T_max])
+```
+
+Verify the temporal model definitions:
+
+```bash
+PYTHONPATH=. python models/gonet_temporal.py
+```
+
+Expected output:
+
+```text
+Device: cuda
+Input: torch.Size([2, 11, 3, 128, 128])
+Output prob: torch.Size([2, 11, 1])
+Output logit: torch.Size([2, 11, 1])
+```
+
+---
+
+## 18. Step 14 — Train GONet+T
+
+GONet+T uses:
+
+```text
+frozen Generator
+frozen InvG
+frozen Discriminator
+trainable feature reducer
+trainable LSTM classifier
+```
+
+The architecture is:
+
+```text
+φR = |image_real - image_generated|               → Linear → 10D
+φD = |feature_real - feature_generated|           → Linear → 10D
+φF = discriminator feature from real image        → Linear → 10D
+
+concat(φR, φD, φF) → 30D feature per frame
+30D feature sequence → single-layer LSTM
+LSTM hidden_dim = 64
+linear output → sigmoid probability
+```
+
+The loss is:
+
+```text
+total_loss = λ_pred * prediction_loss + λ_smooth * temporal_smoothness_loss
+```
+
+Design decisions used in the best run:
+
+```text
+sequence handling: variable-length segments with padding/masks
+max chunk length: 64 frames
+feature reducer: 10D per feature group, 30D total
+temporal model: single-layer LSTM
+hidden dimension: 64
+target mode: logit
+λ_pred: 0.5
+λ_smooth: 0.5
+```
+
+### Why train in logit space?
+
+Directly training GONet+T on probabilities caused amplitude compression:
+
+```text
+high probabilities became slightly lower
+low probabilities became slightly higher
+```
+
+This made the temporal output smooth but reduced confidence.
+
+The better design is to train on logits:
+
+```text
+logit(p) = log(p / (1 - p))
+```
+
+The temporal model learns an unbounded confidence score and converts it back to probability with sigmoid at inference time. This preserved high/low confidence while still smoothing frame-to-frame noise.
+
+Train the best logit-space GONet+T model:
+
+```bash
+PYTHONPATH=. python train_gonet_t.py \
+  --pseudo-csv \
+    outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+    outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output-dir checkpoints/gonet_t_logit_lpred05_lsmooth05 \
+  --epochs 10 \
+  --batch-size 4 \
+  --max-length 64 \
+  --min-length 1 \
+  --lr 1e-4 \
+  --lambda-pred 0.5 \
+  --lambda-smooth 0.5 \
+  --target-mode logit \
+  --device cuda
+```
+
+If interrupted, resume with:
+
+```bash
+PYTHONPATH=. python train_gonet_t.py \
+  --pseudo-csv \
+    outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+    outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output-dir checkpoints/gonet_t_logit_lpred05_lsmooth05 \
+  --epochs 10 \
+  --batch-size 4 \
+  --max-length 64 \
+  --min-length 1 \
+  --lr 1e-4 \
+  --lambda-pred 0.5 \
+  --lambda-smooth 0.5 \
+  --target-mode logit \
+  --device cuda \
+  --resume checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt
+```
+
+The main checkpoint is:
+
+```text
+checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt
+```
+
+---
+
+## 19. Step 15 — Compare vanilla GONet and GONet+T on selected segments
+
+Use the comparison script to generate:
+
+```text
+comparison plot
+annotated video
+comparison CSV
+```
+
+Example for left-camera train segments:
+
+```bash
+PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-dir outputs/gonet_t_compare_best_logit/train_unlabel_L \
+  --segment-id 58 1918 \
+  --threshold 0.85 \
+  --fps 3 \
+  --scale 4 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+Example for right-camera train segments:
+
+```bash
+PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_R_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-dir outputs/gonet_t_compare_best_logit/train_unlabel_R \
+  --segment-id 1906 1680 \
+  --threshold 0.85 \
+  --fps 3 \
+  --scale 4 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+Or generate top-k segment comparisons automatically:
+
+```bash
+PYTHONPATH=. python tools/compare_gonet_vs_gonet_t.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/train_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-dir outputs/gonet_t_compare_best_logit/top_segments_L \
+  --top-k 10 \
+  --min-length 40 \
+  --threshold 0.85 \
+  --fps 3 \
+  --scale 4 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+The generated video overlays:
+
+```text
+Vanilla GONet probability
+GONet+T probability
+GO / NO-GO decisions
+threshold
+building / segment / frame information
+```
+
+---
+
+## 20. Step 16 — Run GONet+T on test and validation unlabelled data
+
+The GONet+T model was trained on train unlabelled sequences only. For held-out unlabelled evaluation, build manifests and pseudo-labels for:
+
+```text
+whole_dataset/data_test/unlabel_L
+whole_dataset/data_test/unlabel_R
+whole_dataset/data_vali/unlabel_L
+whole_dataset/data_vali/unlabel_R
+```
+
+### Build test manifests
+
+```bash
+PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+  --data-root $DATA_ROOT \
+  --split test \
+  --side L \
+  --output-dir outputs/gonet_t_manifests
+```
+
+```bash
+PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+  --data-root $DATA_ROOT \
+  --split test \
+  --side R \
+  --output-dir outputs/gonet_t_manifests
+```
+
+### Build validation manifests
+
+```bash
+PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+  --data-root $DATA_ROOT \
+  --split val \
+  --side L \
+  --output-dir outputs/gonet_t_manifests
+```
+
+```bash
+PYTHONPATH=. python tools/build_unlabelled_sequence_manifest.py \
+  --data-root $DATA_ROOT \
+  --split val \
+  --side R \
+  --output-dir outputs/gonet_t_manifests
+```
+
+### Generate pseudo-labels for test and validation
+
+```bash
+PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+  --manifest outputs/gonet_t_manifests/test_unlabel_L_manifest.csv \
+  --checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --batch-size 128 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+  --manifest outputs/gonet_t_manifests/test_unlabel_R_manifest.csv \
+  --checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output outputs/gonet_t_pseudo_labels/test_unlabel_R_pseudo.csv \
+  --batch-size 128 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+  --manifest outputs/gonet_t_manifests/val_unlabel_L_manifest.csv \
+  --checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output outputs/gonet_t_pseudo_labels/val_unlabel_L_pseudo.csv \
+  --batch-size 128 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/pseudo_label_unlabelled_manifest.py \
+  --manifest outputs/gonet_t_manifests/val_unlabel_R_manifest.csv \
+  --checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --output outputs/gonet_t_pseudo_labels/val_unlabel_R_pseudo.csv \
+  --batch-size 128 \
+  --device cuda
+```
+
+### Run full-split GONet+T inference
+
+This computes GONet+T probabilities for every unlabelled frame and writes one full comparison CSV per split/side.
+
+```bash
+PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-csv outputs/gonet_t_full_inference/test_unlabel_L_full_comparison.csv \
+  --threshold 0.85 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_R_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-csv outputs/gonet_t_full_inference/test_unlabel_R_full_comparison.csv \
+  --threshold 0.85 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/val_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-csv outputs/gonet_t_full_inference/val_unlabel_L_full_comparison.csv \
+  --threshold 0.85 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+```bash
+PYTHONPATH=. python tools/run_gonet_t_full_inference.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/val_unlabel_R_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-csv outputs/gonet_t_full_inference/val_unlabel_R_full_comparison.csv \
+  --threshold 0.85 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+Each full comparison CSV contains:
+
+```text
+segment_id
+segment_local_index
+building_id
+frame_idx
+side
+filename
+path
+vanilla_prob
+gonet_t_prob
+threshold
+vanilla_decision
+gonet_t_decision
+abs_difference
+```
+
+Each run also creates a summary CSV.
+
+---
+
+## 21. GONet+T results on GO Stanford unlabelled splits
+
+These results are from the **GO Stanford dataset only**. No warehouse or external dataset was used.
+
+The vanilla GONet model was first used to pseudo-label unlabelled GO Stanford frames. GONet+T was then evaluated as a temporal stabilizer against those vanilla GONet probabilities.
+
+| Split | Frames | Segments | Mean vanilla | Mean GONet+T | Mean abs diff | Vanilla GO | GONet+T GO | Flip rate | Jitter reduction |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Test L | 9023 | 352 | 0.4724 | 0.4669 | 0.0203 | 2945 | 2847 | 2.26% | 8.91% |
+| Test R | 9023 | 352 | 0.4830 | 0.4755 | 0.0209 | 3048 | 2901 | 2.49% | 9.36% |
+| Val L | 8023 | 294 | 0.4181 | 0.4083 | 0.0207 | 2184 | 2043 | 2.53% | 9.15% |
+| Val R | 8023 | 294 | 0.4299 | 0.4210 | 0.0208 | 2284 | 2113 | 3.05% | 9.26% |
+
+Combined over all four unlabelled split/side combinations:
+
+```text
+Total frames evaluated: 34,092
+Total temporal segments: 1,292
+Mean absolute probability difference: ~0.021
+Decision flip rate: ~2.6%
+Jitter reduction: ~9.2%
+```
+
+Interpretation:
+
+```text
+GONet+T preserves the vanilla GONet probability scale while reducing frame-to-frame prediction jitter by about 9%.
+```
+
+GONet+T is slightly more conservative than vanilla GONet, because the number of GO frames is consistently lower after temporal smoothing. This is acceptable for a robotics traversability prototype because it reduces unstable GO decisions rather than making the system more aggressive.
+
+Important limitation:
+
+```text
+These are not human-labelled accuracy numbers.
+They measure temporal stabilization relative to vanilla GONet pseudo-labels on GO Stanford unlabelled sequences.
+```
+
+---
+
+## 22. Recommended final checkpoints
+
+For vanilla GONet:
+
+```text
+checkpoints/gonet_fl/fl_best.pt
+```
+
+For GONet+T:
+
+```text
+checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt
+```
+
+For the GAN used by this run:
+
+```text
+checkpoints/gonet_gan/gan_epoch_0020.pt
+```
+
+For InvG:
+
+```text
+checkpoints/gonet_invg/invg_latest.pt
+```
+
+---
+
+## 23. Optional — Remove `PYTHONPATH=.`
 
 Currently, commands use:
 
@@ -760,6 +1517,7 @@ python train_gan.py ...
 python train_invg.py ...
 python train_fl.py ...
 python evaluate_gonet.py ...
+python train_gonet_t.py ...
 python tools/infer_unlablelled_gs.py ...
 ```
 
@@ -767,7 +1525,7 @@ without `PYTHONPATH=.`.
 
 ---
 
-## 15. Troubleshooting
+## 24. Troubleshooting
 
 ### `ModuleNotFoundError: No module named 'datasets'`
 
@@ -833,15 +1591,17 @@ Do not blindly use `gan_latest.pt` if the generated samples have degraded.
 
 ---
 
-## 16. Data used by each training stage
+## 25. Data used by each training stage
 
 | Stage | Dataset folders | Labels? | Purpose |
 |---|---|---:|---|
 | DCGAN | `whole_dataset/data_train/positive_L`, `positive_R` | No binary labels | Learn traversable image manifold |
 | InvG | `whole_dataset/data_train/positive_L`, `positive_R` | No binary labels | Learn image → latent mapping |
 | FL classifier | `hand_labelled_dataset/data_train_annotation/positive_*`, `negative_*` | Yes | Learn GO/NO-GO decision |
-| Evaluation | `hand_labelled_dataset/data_test_annotation/positive_*`, `negative_*` | Yes | Test performance |
-| Inference video | `whole_dataset/data_test/unlabel_L/R` | No | Visualize predictions on unlabelled sequences |
+| Vanilla GONet evaluation | `hand_labelled_dataset/data_test_annotation/positive_*`, `negative_*` | Yes | Test image-level classifier performance |
+| Vanilla GONet inference video | `whole_dataset/data_test/unlabel_L/R` | No | Visualize frame-wise predictions on unlabelled sequences |
+| GONet+T training | `whole_dataset/data_train/unlabel_L/R` | Pseudo-labels from vanilla GONet | Learn temporal stabilization |
+| GONet+T held-out analysis | `whole_dataset/data_test/unlabel_L/R`, `whole_dataset/data_vali/unlabel_L/R` | Pseudo-labels from vanilla GONet | Measure temporal smoothing on unlabelled sequences |
 
 From the DCGAN training log:
 
@@ -860,7 +1620,7 @@ with `drop_last=True`.
 
 ---
 
-## 17. Limitations
+## 26. Limitations
 
 This is an image-level traversability classifier.
 
@@ -879,20 +1639,22 @@ It answers only:
 Is this image likely traversable or not?
 ```
 
+The GONet+T extension adds temporal smoothing, but it is still based on pseudo-labels from vanilla GONet and is not a replacement for human-labelled temporal ground truth.
+
 For warehouse AMRs, future extensions should include:
 
 ```text
 path-aware inference
-temporal smoothing
 debris segmentation
 uncertainty estimation
 fusion with depth or projected planned path
+evaluation on warehouse robot data
 ```
 
 ---
 
-## 18. Citation / acknowledgement
+## 27. Citation / acknowledgement
 
 This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
 
-Please cite and acknowledge the original [GONet](https://github.com/NHirose/GONET) authors and dataset source when using this repository publicly.
+Please cite and acknowledge the original GONet authors and dataset source when using this repository publicly.
