@@ -138,7 +138,11 @@ gonet_pytorch/
 │   ├── visualize_pseudo_labels.py
 │   ├── compare_gonet_vs_gonet_t.py
 │   ├── run_gonet_t_full_inference.py
-│   └── summarize_gonet_t_comparisons.py
+│   ├── summarize_gonet_t_comparisons.py
+│   ├── apply_ema_to_gonet.py
+│   ├── summarize_ema_results.py
+│   ├── compare_temporal_smoothing_metrics.py
+│   └── compare_gonet_gonett_ema_video.py
 ├── train_gan.py
 ├── train_invg.py
 ├── train_fl.py
@@ -164,7 +168,11 @@ outputs/
 ├── gonet_t_manifests/
 ├── gonet_t_pseudo_labels/
 ├── gonet_t_compare_best_logit/
-└── gonet_t_full_inference/
+├── gonet_t_full_inference/
+├── gonet_ema/
+├── gonet_ema_logit/
+├── gonet_vs_gonett_vs_ema/
+└── temporal_smoothing_metrics_summary.csv
 ```
 
 
@@ -1449,7 +1457,309 @@ They measure temporal stabilization relative to vanilla GONet pseudo-labels on G
 
 ---
 
-## 22. Recommended final checkpoints
+## 22. Classical EMA smoothing baseline
+
+A natural baseline for GONet+T is to smooth the vanilla GONet probability sequence directly using an exponential moving average (EMA).
+
+The probability-space EMA is:
+
+```text
+ema_prob[t] = α * prob[t] + (1 - α) * ema_prob[t-1]
+```
+
+Because the best GONet+T model was trained in logit space, a fairer classical baseline is also evaluated in logit space:
+
+```text
+logit[t] = log(prob[t] / (1 - prob[t]))
+ema_logit[t] = α * logit[t] + (1 - α) * ema_logit[t-1]
+ema_prob[t] = sigmoid(ema_logit[t])
+```
+
+The EMA baselines do not use image features or learning. They only smooth the scalar vanilla GONet output over each temporal segment.
+
+### Run probability-space EMA
+
+Example for one split/side:
+
+```bash
+python tools/apply_ema_to_gonet.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --output-csv outputs/gonet_ema/alpha07/test_unlabel_L_ema.csv \
+  --alpha 0.7 \
+  --ema-space prob \
+  --threshold 0.85
+```
+
+Run the same command for:
+
+```text
+test_unlabel_L
+test_unlabel_R
+val_unlabel_L
+val_unlabel_R
+```
+
+and for different alpha values:
+
+```text
+alpha = 0.2, 0.3, 0.5, 0.7
+```
+
+### Run logit-space EMA
+
+Example for one split/side:
+
+```bash
+python tools/apply_ema_to_gonet.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --output-csv outputs/gonet_ema_logit/alpha07/test_unlabel_L_ema.csv \
+  --alpha 0.7 \
+  --ema-space logit \
+  --threshold 0.85
+```
+
+Again, repeat for all test/validation left/right pseudo-label CSVs and for alpha values:
+
+```text
+alpha = 0.2, 0.3, 0.5, 0.7
+```
+
+### Summarize EMA results
+
+For probability-space EMA:
+
+```bash
+python tools/summarize_ema_results.py \
+  --root outputs/gonet_ema
+```
+
+For logit-space EMA:
+
+```bash
+python tools/summarize_ema_results.py \
+  --root outputs/gonet_ema_logit
+```
+
+### Compare GONet+T against EMA
+
+Generate a combined table across GONet+T, probability-space EMA, and logit-space EMA:
+
+```bash
+python tools/compare_temporal_smoothing_metrics.py \
+  --gonett-root outputs/gonet_t_full_inference \
+  --ema-prob-root outputs/gonet_ema \
+  --ema-logit-root outputs/gonet_ema_logit \
+  --output outputs/temporal_smoothing_metrics_summary.csv
+```
+
+The comparison uses three main metrics:
+
+| Metric | Meaning |
+|---|---|
+| `mean_abs_difference` | How far the smoothed probability is from vanilla GONet on average |
+| `decision_flip_rate` | How often smoothing changes the GO/NO-GO decision at threshold 0.85 |
+| `jitter_reduction_ratio` | Reduction in mean frame-to-frame probability change |
+
+Low `mean_abs_difference` and low `decision_flip_rate` mean the method preserves vanilla GONet behavior. High `jitter_reduction_ratio` means the output is smoother.
+
+### Generate three-way comparison videos
+
+To visually compare vanilla GONet, GONet+T, and EMA on the same temporal segment:
+
+```bash
+python tools/compare_gonet_gonett_ema_video.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --output-dir outputs/gonet_vs_gonett_vs_ema/test_unlabel_L_alpha07 \
+  --top-k 5 \
+  --min-length 40 \
+  --ema-alpha 0.7 \
+  --ema-space logit \
+  --threshold 0.85 \
+  --fps 3 \
+  --scale 4 \
+  --feature-chunk-size 64 \
+  --device cuda
+```
+
+Each video overlays:
+
+```text
+Vanilla GONet probability and decision
+GONet+T probability and decision
+EMA probability and decision
+```
+
+### EMA baseline results on GO Stanford
+
+These results are also from the **GO Stanford dataset only**.
+
+Mean over test/validation left/right unlabelled splits:
+
+| Method | Variant | Mean abs diff | Decision flip rate | Jitter reduction |
+|---|---|---:|---:|---:|
+| GONet+T | logit, λ_pred=0.5, λ_smooth=0.5 | 0.0207 | 2.58% | 9.17% |
+| EMA-logit | α=0.7 | 0.0327 | 3.41% | 12.52% |
+| EMA-prob | α=0.7 | 0.0340 | 4.16% | 13.65% |
+| EMA-logit | α=0.5 | 0.0663 | 7.03% | 22.35% |
+| EMA-prob | α=0.5 | 0.0692 | 8.27% | 24.61% |
+| EMA-logit | α=0.3 | 0.1218 | 12.43% | 37.47% |
+| EMA-prob | α=0.3 | 0.1273 | 13.46% | 40.61% |
+| EMA-logit | α=0.2 | 0.1661 | 16.27% | 49.30% |
+| EMA-prob | α=0.2 | 0.1737 | 16.09% | 52.69% |
+
+Interpretation:
+
+```text
+EMA can reduce jitter more aggressively than GONet+T, especially at lower alpha values.
+However, stronger EMA smoothing also changes the original GONet signal more and flips more GO/NO-GO decisions.
+```
+
+The closest classical baseline is:
+
+```text
+logit-space EMA with α = 0.7
+```
+
+Compared with this baseline:
+
+```text
+GONet+T gives lower mean probability deviation and fewer decision flips.
+EMA-logit α=0.7 gives stronger jitter reduction, but changes the vanilla GONet behavior more.
+```
+
+A careful conclusion is:
+
+```text
+GONet+T provides a conservative temporal stabilization of vanilla GONet.
+EMA provides stronger smoothing, but at the cost of larger behavior change.
+```
+
+---
+
+---
+
+## 23. Inference speed benchmarks
+
+Inference speed was measured after the full GONet and GONet+T pipeline was working. The goal was to check whether the models are fast enough for online robot use.
+
+Two kinds of inference were benchmarked:
+
+```text
+1. Offline / batched throughput
+   Frames or sequences are processed in batches.
+
+2. Stateful online inference
+   One new frame is processed at a time.
+   The LSTM hidden state is carried forward across frames.
+```
+
+The stateful online benchmark is the more realistic deployment mode for GONet+T.
+
+### Offline / batched benchmark
+
+Run:
+
+```bash
+python tools/benchmark_inference_speed.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --max-frames 2048 \
+  --batch-size 64 \
+  --seq-len 64 \
+  --warmup-iters 20 \
+  --repeat-iters 5 \
+  --device cuda
+```
+
+Observed results on an RTX 5070 Ti:
+
+| Mode | Batch / sequence | FPS | ms/frame | Interpretation |
+|---|---:|---:|---:|---|
+| Vanilla GONet | batch 1 | 705–731 | 1.37–1.42 | online single-frame style |
+| Vanilla GONet | batch 64 | ~1781 | ~0.56 | offline/batched throughput |
+| GONet+T | sequence 64 | 1776–1788 | ~0.56 | offline sequence throughput |
+| GONet+T | sequence 16 | ~1710 | ~0.59 | offline sequence throughput |
+
+The sequence benchmark is useful for offline processing, but it is not the true online deployment mode because it processes a full sequence window at once.
+
+### Stateful online GONet+T benchmark
+
+For deployment, GONet+T should be run statefully:
+
+```text
+new frame arrives
+    ↓
+run GONet feature extraction for one frame
+    ↓
+reduce to 30D feature
+    ↓
+feed one timestep into the LSTM with previous hidden state
+    ↓
+emit one probability
+```
+
+Run:
+
+```bash
+python tools/benchmark_stateful_gonet_t.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --max-frames 1024 \
+  --warmup-iters 50 \
+  --repeat-iters 5 \
+  --reset-every 0 \
+  --device cuda
+```
+
+To mimic periodic hidden-state resets every 64 frames:
+
+```bash
+python tools/benchmark_stateful_gonet_t.py \
+  --pseudo-csv outputs/gonet_t_pseudo_labels/test_unlabel_L_pseudo.csv \
+  --gonet-checkpoint checkpoints/gonet_fl/fl_best.pt \
+  --gonet-t-checkpoint checkpoints/gonet_t_logit_lpred05_lsmooth05/gonet_t_latest.pt \
+  --max-frames 1024 \
+  --warmup-iters 50 \
+  --repeat-iters 5 \
+  --reset-every 64 \
+  --device cuda
+```
+
+Observed stateful online results on an RTX 5070 Ti:
+
+| Mode | Reset policy | FPS | ms/frame |
+|---|---:|---:|---:|
+| Vanilla GONet online | N/A | 746–763 | 1.31–1.34 |
+| Stateful GONet+T online | no reset | ~655 | ~1.53 |
+| Stateful GONet+T online | reset every 64 frames | ~625 | ~1.60 |
+| LSTM only | no reset / reset 64 | 6246–6908 | 0.145–0.160 |
+
+Interpretation:
+
+```text
+Vanilla GONet online inference runs at about 1.3 ms/frame.
+Stateful online GONet+T runs at about 1.5–1.6 ms/frame.
+The isolated LSTM step costs only about 0.15 ms/frame.
+```
+
+The main runtime cost is the GONet backbone, not the LSTM. The temporal model adds roughly 0.2–0.3 ms/frame over vanilla GONet in online stateful mode.
+
+For typical AMR camera rates:
+
+```text
+10 FPS → 100 ms/frame budget
+20 FPS → 50 ms/frame budget
+30 FPS → 33 ms/frame budget
+```
+
+both vanilla GONet and stateful GONet+T are comfortably fast enough on the tested GPU.
+
+
+## 24. Recommended final checkpoints
 
 For vanilla GONet:
 
@@ -1477,7 +1787,7 @@ checkpoints/gonet_invg/invg_latest.pt
 
 ---
 
-## 23. Troubleshooting
+## 25. Troubleshooting
 
 ### `ModuleNotFoundError: No module named 'datasets'`
 
@@ -1543,7 +1853,7 @@ Do not blindly use `gan_latest.pt` if the generated samples have degraded.
 
 ---
 
-## 24. Data used by each training stage
+## 26. Data used by each training stage
 
 | Stage | Dataset folders | Labels? | Purpose |
 |---|---|---:|---|
@@ -1554,6 +1864,9 @@ Do not blindly use `gan_latest.pt` if the generated samples have degraded.
 | Vanilla GONet inference video | `whole_dataset/data_test/unlabel_L/R` | No | Visualize frame-wise predictions on unlabelled sequences |
 | GONet+T training | `whole_dataset/data_train/unlabel_L/R` | Pseudo-labels from vanilla GONet | Learn temporal stabilization |
 | GONet+T held-out analysis | `whole_dataset/data_test/unlabel_L/R`, `whole_dataset/data_vali/unlabel_L/R` | Pseudo-labels from vanilla GONet | Measure temporal smoothing on unlabelled sequences |
+| EMA baselines | GONet pseudo-label CSVs from test/validation unlabelled sequences | Pseudo-labels from vanilla GONet | Compare classical smoothing with GONet+T |
+| Inference benchmarks | GO Stanford unlabelled image paths from pseudo-label CSVs | No | Measure batched throughput and stateful online latency |
+| EMA baseline analysis | GONet pseudo-label CSVs from test/validation unlabelled sequences | Pseudo-labels from vanilla GONet | Compare learned temporal smoothing against classical filtering |
 
 From the DCGAN training log:
 
@@ -1572,7 +1885,7 @@ with `drop_last=True`.
 
 ---
 
-## 25. Limitations
+## 27. Limitations
 
 This is an image-level traversability classifier.
 
@@ -1593,6 +1906,8 @@ Is this image likely traversable or not?
 
 The GONet+T extension adds temporal smoothing, but it is still based on pseudo-labels from vanilla GONet and is not a replacement for human-labelled temporal ground truth.
 
+The inference benchmarks were measured on an RTX 5070 Ti with GO Stanford frames preloaded into memory. End-to-end deployment latency on a robot will also include camera capture, image transport, preprocessing, scheduling, and any downstream safety logic. The EMA analysis shows that classical filters are strong baselines and should be considered for deployment when simplicity and interpretability matter.
+
 For warehouse AMRs, future extensions should include:
 
 ```text
@@ -1605,7 +1920,7 @@ evaluation on warehouse robot data
 
 ---
 
-## 26. Citation / acknowledgement
+## 28. Citation / acknowledgement
 
 This project is based on the GONet traversability-estimation idea and the GO Stanford dataset.
 
