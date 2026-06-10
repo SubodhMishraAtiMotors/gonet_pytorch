@@ -9,10 +9,10 @@ class Generator(nn.Module):
     GONet/DCGAN-style generator.
 
     Input:
-        z: [B, nz]
+        z: [B, nz], B: Batch size, nz: latent dimension
 
     Output:
-        image: [B, 3, 128, 128]
+        image: [B, 3, 128, 128]: 128x128 RGB image
     """
 
     def __init__(self, nz: int = 100, use_tanh: bool = False):
@@ -21,26 +21,32 @@ class Generator(nn.Module):
         self.nz = nz
         self.use_tanh = use_tanh
 
+        # Fully connected layer to project from latent space of 100 dimensions to a 8x8x512 dimensioned vector, 
+        # which can then be reshaped into a 512-channel 8x8 feature map for the transposed convolutional layers.
         self.fc = nn.Sequential(
             nn.Linear(nz, 8 * 8 * 512),
-            nn.BatchNorm1d(8 * 8 * 512),
+            nn.BatchNorm1d(num_features = 8 * 8 * 512),
             nn.ReLU(inplace=True),
         )
 
+        # Transposed convolutional layers to upsample from 8x8 to 128x128
+        # out_size = (in_size - 1) * stride - 2 * padding + kernel_size (+ output_padding, optionally) 
+        # Inplace ReLU is memory efficient, but should be avoided with skip connections. 
+        # Here we don't have skip connections, so Inplace ReLU is fine.
         layers = [
-            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256),
+            nn.ConvTranspose2d(in_channels = 512, out_channels = 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 256),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
+            nn.ConvTranspose2d(in_channels = 256, out_channels = 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 128),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
+            nn.ConvTranspose2d(in_channels = 128, out_channels = 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 64),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(in_channels = 64, out_channels = 3, kernel_size=4, stride=2, padding=1),
         ]
 
         if use_tanh:
@@ -54,65 +60,15 @@ class Generator(nn.Module):
         x = self.deconv(x)
         return x
 
-
-class InvG(nn.Module):
-    """
-    Inverse generator.
-
-    Maps an image back into the generator latent space.
-
-    Input:
-        image: [B, 3, 128, 128]
-
-    Output:
-        z: [B, nz]
-    """
-
-    def __init__(self, nz: int = 100):
-        super().__init__()
-
-        self.nz = nz
-
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-
-            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-        )
-
-        self.fc = nn.Linear(512 * 8 * 8, nz)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.encoder(x)
-        h = h.reshape(x.size(0), -1)
-        z = self.fc(h)
-        return z
-
-
 class Discriminator(nn.Module):
     """
     Discriminator from GONet.
 
-    In the original Chainer inference code, the discriminator computes logits
-    internally but returns the intermediate feature map h.
-
-    We expose both options here.
-
     Input:
-        image: [B, 3, 128, 128]
+        image: [B, 3, 128, 128], B: Batch size, Input is a 128x128 RGB Image
 
     Output by default:
-        features: [B, 512, 8, 8]
+        features: [B, 512, 8, 8], B: Batch size, Output is a 512 channeled 8x8 feature map, but can return logits too.
 
     If return_logits=True:
         features, logits
@@ -122,23 +78,23 @@ class Discriminator(nn.Module):
         super().__init__()
 
         self.features = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(in_channels = 3, out_channels = 64, kernel_size=4, stride=2, padding=1),
             nn.ELU(inplace=True),
 
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 128),
             nn.ELU(inplace=True),
 
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 256),
             nn.ELU(inplace=True),
 
-            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(in_channels = 256, out_channels = 512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 512),
             nn.ELU(inplace=True),
         )
 
-        self.classifier = nn.Linear(512 * 8 * 8, 2)
+        self.classifier = nn.Linear(in_features = 512 * 8 * 8, out_features = 2)
 
     def forward(self, x: torch.Tensor, return_logits: bool = False):
         h = self.features(x)
@@ -149,33 +105,73 @@ class Discriminator(nn.Module):
 
         return h
 
+class InvG(nn.Module):
+    """
+    Inverse generator.
+
+    Maps an image back into the generator latent space.
+
+    Input:
+        image: [B, 3, 128, 128], B: Batch size, Input is a 128x128 RGB Image
+
+    Output:
+        z: [B, nz], B: Batch size, nz: latent dimension, Output is the latent vector corresponding to the input image
+    """
+
+    def __init__(self, nz: int = 100):
+        super().__init__()
+
+        self.nz = nz
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels = 3, out_channels = 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 128),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 256),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(in_channels = 256, out_channels = 512, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features = 512),
+            nn.ReLU(inplace=True),
+        )
+
+        self.fc = nn.Linear(in_features = 512 * 8 * 8, out_features = self.nz)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.encoder(x)
+        h = h.reshape(x.size(0), -1)
+        z = self.fc(h)
+        return z
 
 class GONetClassifier(nn.Module):
     """
     Final GONet classification layer, equivalent to FL in the Chainer code.
 
     Inputs:
-        img_error: [B, 3, 128, 128]
+        img_error: [B, 3, 128, 128], B: Batch size, Input is the pixel-wise error between the real and generated image, calculated as
             img_real - img_gen
 
-        dis_error: [B, 512, 8, 8]
+        dis_error: [B, 512, 8, 8], B: Batch size, Input is the feature-wise error between the real and generated image, calculated as
             dis_real - dis_gen
 
-        dis_real: [B, 512, 8, 8]
-            discriminator features of the real image
+        dis_real: [B, 512, 8, 8], B: Batch size, Input is the discriminator features of the real image
 
     Output:
-        prob: [B, 1]
-            traversability probability
+        prob: [B, 1], B: Batch size, Output is the traversability probability
     """
 
     def __init__(self):
         super().__init__()
 
-        self.l_img = nn.Linear(3 * 128 * 128, 1)
-        self.l_dis = nn.Linear(512 * 8 * 8, 1)
-        self.l_fdis = nn.Linear(512 * 8 * 8, 1)
-        self.l_final = nn.Linear(3, 1)
+        self.l_img = nn.Linear(in_features = 3 * 128 * 128, out_features = 1)
+        self.l_dis = nn.Linear(in_features = 512 * 8 * 8, out_features = 1)
+        self.l_fdis = nn.Linear(in_features = 512 * 8 * 8, out_features = 1)
+        self.l_final = nn.Linear(in_features = 3, out_features = 1)
 
     def forward(
         self,
@@ -196,7 +192,6 @@ class GONetClassifier(nn.Module):
         prob = torch.sigmoid(self.l_final(x))
 
         return prob
-
 
 class GONetFull(nn.Module):
     """
@@ -246,11 +241,9 @@ class GONetFull(nn.Module):
             "dis_gen": dis_gen,
         }
 
-
 def init_weights_normal(module: nn.Module, std: float = 0.02):
     """
-    DCGAN-style initialization, matching the original Chainer code's
-    Normal(wscale=0.02) initialization approximately.
+    DCGAN-style initialization
     """
 
     classname = module.__class__.__name__
@@ -270,7 +263,6 @@ def init_weights_normal(module: nn.Module, std: float = 0.02):
             nn.init.normal_(module.weight.data, mean=1.0, std=std)
         if module.bias is not None:
             nn.init.constant_(module.bias.data, 0.0)
-
 
 def build_gonet_modules(
     nz: int = 100,
@@ -296,7 +288,6 @@ def build_gonet_modules(
         classifier.apply(init_weights_normal)
 
     return generator, invg, discriminator, classifier
-
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
