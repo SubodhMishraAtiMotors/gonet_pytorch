@@ -15,6 +15,10 @@ class Generator(nn.Module):
         image: [B, 3, 128, 128]: 128x128 RGB image
     """
 
+    # The latent dimension controls the capacity of the generator's input space. A small nz forces a compact 
+    # representation but may limit image diversity and reconstruction quality. A large nz gives the model more expressive power, 
+    # but increases parameters and can make the inverse mapping less constrained. In GONet-like setups, nz should be large enough 
+    # to reconstruct normal/traversable images well, but not so large that it reconstructs everything, including anomalous cases, too easily.
     def __init__(self, nz: int = 100, use_tanh: bool = False):
         super().__init__()
 
@@ -77,6 +81,10 @@ class Discriminator(nn.Module):
     def __init__(self):
         super().__init__()
 
+        # We use ELU instead of ReLU in the discriminator because the discriminator should preserve 
+        # negative feature responses rather than killing them completely.
+        # This is an architectural choice, not a universal GAN rule. Many GAN discriminators use LeakyReLU instead. 
+        # The key idea is that discriminator activations often benefit from not hard-clipping all negative values to zero.
         self.features = nn.Sequential(
             nn.Conv2d(in_channels = 3, out_channels = 64, kernel_size=4, stride=2, padding=1),
             nn.ELU(inplace=True),
@@ -105,6 +113,9 @@ class Discriminator(nn.Module):
 
         return h
 
+# InvG plays the role of an encoder. Together, InvG and the generator form an autoencoder-like architecture, 
+# where InvG maps an image to latent space and the generator reconstructs it. The difference is that the decoder 
+# is a GAN generator that has already learned the manifold of traversable images.
 class InvG(nn.Module):
     """
     Inverse generator.
@@ -168,9 +179,18 @@ class GONetClassifier(nn.Module):
     def __init__(self):
         super().__init__()
 
+        # The GONet classifier takes three inputs: 
+        # a. the pixel-wise error between the real and generated images, 
         self.l_img = nn.Linear(in_features = 3 * 128 * 128, out_features = 1)
+        # b. the feature-wise error from the discriminator,
         self.l_dis = nn.Linear(in_features = 512 * 8 * 8, out_features = 1)
+        # c. and the discriminator features of the real image.
         self.l_fdis = nn.Linear(in_features = 512 * 8 * 8, out_features = 1)
+        # Each of a, b, c is processed through a separate linear layer - l_img, l_dis, l_fdis, to extract relevant information. 
+        # The outputs of these layers are then concatenated and passed through a final linear layer followed by a 
+        # sigmoid activation to produce a probability of traversability. 
+        # This architecture allows the classifier to leverage both low-level pixel differences and high-level feature 
+        # discrepancies to make its prediction.
         self.l_final = nn.Linear(in_features = 3, out_features = 1)
 
     def forward(
@@ -243,7 +263,10 @@ class GONetFull(nn.Module):
 
 def init_weights_normal(module: nn.Module, std: float = 0.02):
     """
-    DCGAN-style initialization
+    DCGAN-style initialization: 
+    Convolution and linear layers are initialized from N(0, 0.02),
+    while BatchNorm scale parameters are initialized from N(1, 0.02)
+    and biases are initialized to zero.
     """
 
     classname = module.__class__.__name__

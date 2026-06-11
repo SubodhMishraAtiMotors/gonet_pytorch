@@ -15,8 +15,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from datasets.go_stanford import GOStanfordPositiveDataset
-from models.gonet import Generator, InvG, init_weights_normal
-
+from models.gonet import Generator, Discriminator, InvG, init_weights_normal
+from torch.utils.tensorboard import SummaryWriter
 
 def denorm_for_save(x: torch.Tensor) -> torch.Tensor:
     """
@@ -64,10 +64,10 @@ def plot_losses(loss_history, output_dir):
         return
 
     plt.figure()
-    plt.plot(loss_history["epoch"], loss_history["train_l1"], label="Train L1")
-    plt.plot(loss_history["epoch"], loss_history["val_l1"], label="Val L1")
+    plt.plot(loss_history["epoch"], loss_history["train_loss"], label="Train Loss")
+    plt.plot(loss_history["epoch"], loss_history["val_loss"], label="Val Loss")
     plt.xlabel("Epoch")
-    plt.ylabel("L1 reconstruction loss")
+    plt.ylabel("Joint Image and Feature reconstruction loss")
     plt.title("InvG Reconstruction Training")
     plt.legend()
     plt.grid(True)
@@ -80,6 +80,7 @@ def save_checkpoint(
     output_dir,
     epoch,
     generator,
+    discriminator,
     invg,
     optimizer,
     args,
@@ -89,6 +90,7 @@ def save_checkpoint(
     checkpoint = {
         "epoch": epoch,
         "generator": generator.state_dict(),
+        "discriminator": discriminator.state_dict(),
         "invg": invg.state_dict(),
         "optimizer": optimizer.state_dict(),
         "args": vars(args),
@@ -103,9 +105,11 @@ def save_checkpoint(
     torch.save(checkpoint, path)
 
 
-def evaluate_l1(generator, invg, dataloader, criterion, device):
+def evaluate(generator, discriminator, invg, dataloader, criterion_images, criterion_features, device, lambda_recon):
+    # Ensure all the models are in eval mode
     generator.eval()
     invg.eval()
+    discriminator.eval()
 
     total_loss = 0.0
     total_count = 0
@@ -115,14 +119,14 @@ def evaluate_l1(generator, invg, dataloader, criterion, device):
             real = batch["image"].to(device, non_blocking=True)
             z_hat = invg(real)
             recon = generator(z_hat)
-
-            loss = criterion(recon, real)
+            real_feature = discriminator(real)
+            recon_feature = discriminator(recon)
+            loss = (1.0-lambda_recon)*criterion_images(recon, real) + lambda_recon*criterion_features(recon_feature, real_feature)
 
             bsz = real.size(0)
             total_loss += loss.item() * bsz
             total_count += bsz
-
-    generator.train()
+    # Only the inverse generator is being trained here.
     invg.train()
 
     return total_loss / max(1, total_count)
@@ -157,10 +161,10 @@ def main():
     parser.add_argument("--weight-decay", type=float, default=0.0)
 
     parser.add_argument(
-        "--lambda-z",
+        "--lambda-recon",
         type=float,
-        default=0.0,
-        help="Optional latent regularization weight: encourages z_hat to remain small. Keep 0.0 first.",
+        default=0.5,
+        help="Weight balancing image reconstruction and feature reconstruction.",
     )
 
     parser.add_argument(
@@ -242,6 +246,7 @@ def main():
     print(f"Train batches per epoch: {len(train_loader)}")
 
     generator = Generator(nz=args.nz, use_tanh=args.use_tanh).to(device)
+    discriminator = Discriminator().to(device)
     invg = InvG(nz=args.nz).to(device)
 
     invg.apply(init_weights_normal)
@@ -250,16 +255,23 @@ def main():
     if not gan_ckpt_path.exists():
         raise FileNotFoundError(f"GAN checkpoint not found: {gan_ckpt_path}")
 
-    print(f"Loading generator from: {gan_ckpt_path}")
+    print(f"Loading generator and discriminator from: {gan_ckpt_path}")
     gan_checkpoint = torch.load(gan_ckpt_path, map_location=device)
     generator.load_state_dict(gan_checkpoint["generator"])
+    discriminator.load_state_dict(gan_checkpoint["discriminator"])
 
     # Freeze generator
     generator.eval()
     for p in generator.parameters():
         p.requires_grad = False
+    
+    # Freeze discriminator
+    discriminator.eval()
+    for p in discriminator.parameters():
+        p.requires_grad = False
 
-    criterion_l1 = nn.L1Loss()
+    criterion_images = nn.L1Loss()
+    criterion_features = nn.MSELoss()
 
     optimizer = torch.optim.Adam(
         invg.parameters(),
@@ -272,8 +284,8 @@ def main():
 
     loss_history = {
         "epoch": [],
-        "train_l1": [],
-        "val_l1": [],
+        "train_loss": [],
+        "val_loss": [],
     }
 
     if args.resume is not None:
@@ -294,10 +306,12 @@ def main():
 
         print(f"Resuming from epoch {start_epoch}")
 
+    writer = SummaryWriter(log_dir=args.output_dir)
     for epoch in range(start_epoch, args.epochs + 1):
         invg.train()
         generator.eval()
-
+        discriminator.eval()
+        
         running_loss = 0.0
         running_count = 0
 
@@ -311,19 +325,16 @@ def main():
 
             z_hat = invg(real)
             recon = generator(z_hat)
-
-            recon_loss = criterion_l1(recon, real)
-
-            if args.lambda_z > 0.0:
-                z_reg = torch.mean(z_hat ** 2)
-                loss = recon_loss + args.lambda_z * z_reg
-            else:
-                loss = recon_loss
+            recon_loss = criterion_images(recon, real)
+            real_features = discriminator(real)
+            recon_features = discriminator(recon)
+            feature_recon_loss = criterion_features(recon_features, real_features)
+            loss = (1.0-args.lambda_recon)*recon_loss + args.lambda_recon*feature_recon_loss
 
             loss.backward()
             optimizer.step()
 
-            running_loss += recon_loss.item() * bsz
+            running_loss += loss.item() * bsz
             running_count += bsz
 
             pbar.set_postfix(
@@ -332,29 +343,36 @@ def main():
                 }
             )
 
-        train_l1 = running_loss / max(1, running_count)
-        val_l1 = evaluate_l1(
+        train_loss = running_loss / max(1, running_count)
+        val_loss= evaluate(
             generator=generator,
+            discriminator=discriminator,
             invg=invg,
             dataloader=val_loader,
-            criterion=criterion_l1,
+            criterion_images=criterion_images,
+            criterion_features=criterion_features,
             device=device,
+            lambda_recon = args.lambda_recon
         )
 
+        writer.add_scalar("Loss/Train", train_loss, epoch)
+        writer.add_scalar("Loss/Validation", val_loss, epoch)
+
         loss_history["epoch"].append(epoch)
-        loss_history["train_l1"].append(train_l1)
-        loss_history["val_l1"].append(val_l1)
+        loss_history["train_loss"].append(train_loss)
+        loss_history["val_loss"].append(val_loss)
 
         print(
             f"Epoch [{epoch}/{args.epochs}] "
-            f"train_L1={train_l1:.6f} "
-            f"val_L1={val_l1:.6f}"
+            f"train_L1={train_loss:.6f} "
+            f"val_L1={val_loss:.6f}"
         )
 
         save_checkpoint(
             output_dir=output_dir,
             epoch=epoch,
             generator=generator,
+            discriminator=discriminator,
             invg=invg,
             optimizer=optimizer,
             args=args,
@@ -367,6 +385,7 @@ def main():
                 output_dir=output_dir,
                 epoch=epoch,
                 generator=generator,
+                discriminator=discriminator,
                 invg=invg,
                 optimizer=optimizer,
                 args=args,
@@ -386,7 +405,7 @@ def main():
             )
 
         plot_losses(loss_history, output_dir)
-
+    writer.close()
     print()
     print(f"InvG training complete. Outputs saved to: {output_dir}")
 

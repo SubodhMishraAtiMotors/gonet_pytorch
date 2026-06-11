@@ -105,6 +105,8 @@ def main():
 
     parser.add_argument("--nz", type=int, default=100)
     parser.add_argument("--lr", type=float, default=2e-4)
+    # beta1 : remembers gradient direction
+    # beta2 : remembers gradient size / variance
     parser.add_argument("--beta1", type=float, default=0.5)
     parser.add_argument("--beta2", type=float, default=0.999)
 
@@ -192,7 +194,12 @@ def main():
     discriminator.apply(init_weights_normal)
 
     criterion = nn.CrossEntropyLoss()
-
+    # g_t = ∇θ L_t
+    # m_t = β1 m_{t-1} + (1 - β1) g_t
+    # v_t = β2 v_{t-1} + (1 - β2) g_t²
+    # m̂_t = m_t / (1 - β1ᵗ)
+    # v̂_t = v_t / (1 - β2ᵗ)
+    # θ_t = θ_{t-1} - α * m̂_t / (sqrt(v̂_t) + ε)
     optimizer_g = torch.optim.Adam(
         generator.parameters(),
         lr=args.lr,
