@@ -188,7 +188,7 @@ def main():
 
     parser.add_argument(
         "--smoothness-loss",
-        default="l1",
+        default="mse",
         choices=["mse", "l1"],
     )
 
